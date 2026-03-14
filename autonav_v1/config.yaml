@@ -1,0 +1,61 @@
+dry_run: true
+
+loop_hz: 20
+
+serial:
+  baud: 9600
+  # Update these to match your Pi after you plug devices in
+  steering_port: "/dev/ttyUSB0"
+  throttle_port: "/dev/ttyUSB1"
+  brake_port:    "/dev/ttyUSB2"
+
+steering:
+  # Option A locked:
+  # 0% = -45 deg (left), 50% = 0 deg, 100% = +45 deg (right)
+  max_wheel_deg: 45.0
+  invert: false
+
+frame:
+  # Cone coordinates are unknown — configure here after a quick cone-ahead test.
+  # forward_axis must be "x" or "y"
+  forward_axis: "y"
+  forward_sign: 1       # +1 or -1
+  right_sign: 1         # +1 or -1
+
+cone_nav:
+  # Use cones in a forward slice
+  fwd_min_m: 0.25
+  fwd_max_m: 8.0
+  # If only one side of cones exists, assume corridor width
+  corridor_width_m: 2.0
+  # Lookahead distance for target selection (in forward meters)
+  target_fwd_m: 3.0
+  # How many cones to consider per side (nearest N)
+  use_nearest_n: 3
+
+pure_pursuit:
+  # For target-point pursuit we only need lookahead distance
+  lookahead_m: 3.0
+
+speed:
+  base_throttle_pct: 25
+  min_throttle_pct:  10
+  max_throttle_pct:  35
+
+  # Slow down as steering demand increases
+  steering_slow_gain: 0.35   # throttle_reduction = gain * abs(steer_deg)
+
+  # Emergency corridor stop (optional safety)
+  enable_emergency_stop: true
+  estop_corridor_half_width_m: 0.6   # |right| < width is "in front of us"
+  estop_distance_m: 1.2              # fwd < this => full brake
+  slow_distance_m: 2.5               # fwd < this => slow
+
+  brake_pct_estop: 90
+  brake_pct_slow: 40
+
+cone_source:
+  # "file" = reads cone detections from cone_sample.json repeatedly (for bench testing)
+  # Replace later with your real cone pipeline hook.
+  type: "file"
+  file_path: "cone_sample.json"

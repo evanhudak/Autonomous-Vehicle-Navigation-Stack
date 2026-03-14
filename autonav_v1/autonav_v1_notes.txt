@@ -1,0 +1,150 @@
+This file contains an explanation of each file in the autonav_v1 project.
+
+A) autonav_v1
+
+    1) main.py - system integration (top-level entry point)
+
+        This file is the main entry point of the project. It pulls information from
+        every other file and wires together sensors -> planning -> control -> actuators.
+        It also handles safe startup and shutdown behavior. Any major runtime errors
+        will typically surface here.
+
+        Process:
+            - Loads parameters from config.yaml
+            - Reads cones from the cone source (cone_source.get_cones())
+            - Converts cones to a target point (compute_target_from_cones)
+            - Computes steering angle using pure-pursuit logic
+            - Computes throttle and brake using safety rules
+            - Sends 0-100 commands to each Arduino via serial drivers
+            - Supports dry_run mode for testing without hardware
+
+    2) config.yaml - tuning and wiring configuration
+
+        This file keeps the code flexible and safe when hardware, sensors, or tuning
+        values change. It controls:
+            - Which serial port is steering, throttle, and brake
+            - Baud rate for Arduino communication
+            - Steering mapping parameters (max wheel angle, inversion)
+            - LiDAR coordinate-frame assumptions
+            - Cone filtering window (forward min/max)
+            - Corridor width estimate
+            - Speed and brake thresholds and gains
+            - Loop frequency (loop_hz)
+            - Optional dry_run mode
+
+    3) requirements.txt - dependency list
+
+        This file lists Python dependencies required for running on Raspberry Pi OS Lite.
+        Typical contents include:
+            - pyserial (serial communication with Arduinos)
+            - pyyaml (reading config.yaml)
+
+    4) cone_sample.json - bench testing input
+
+        This file simulates cone detections without requiring a live LiDAR connection.
+        It uses the same cone format as the perception pipeline: (xc, yc, zc, w, d, h).
+
+        Supported formats:
+            - Static list of cones (always returns the same detections)
+            - Multi-frame playback using fps and frames entries
+
+        Used to validate:
+            - Steering, throttle, and brake outputs
+            - Command formatting and serial logic
+            - Safety behavior (slowdown and emergency stop)
+            - Target selection and steering response
+
+B) serial_io
+
+    1) steering.py - steering Arduino interface
+
+        This file defines the serial command format for the steering subsystem.
+        Navigation logic does not change when the steering protocol changes.
+
+        Sends:
+            - S:<pct>\n where <pct> is in the range 0-100
+
+    2) throttle.py - throttle Arduino interface
+
+        This file defines the throttle serial protocol and isolates startup and
+        emergency stop behavior.
+
+        Sends:
+            - AUTO\n once at startup (enter autonomous mode)
+            - <pct>\n where <pct> is in the range 0-100
+            - STOP\n for emergency stop
+
+    3) brake.py - brake Arduino interface
+
+        This file defines the brake serial protocol.
+
+        Sends:
+            - <pct>\n where 0 = no brake and 100 = full brake
+
+C) navigation
+
+    1) cone_frame.py - coordinate frame normalization
+
+        This file defines the coordinate mapping between sensor space and the vehicle
+        control frame. Changes can be made here without modifying navigation logic.
+
+        What it does:
+            - Converts (xc, yc) into normalized (right_m, fwd_m)
+            - Controlled by config values: forward_axis, forward_sign, right_sign
+
+    2) cone_target.py - convert cones into a target point
+
+        This file converts perception outputs into a single target point that the
+        controller can follow.
+
+        What it does:
+            - Converts cone boxes into (right_m, fwd_m)
+            - Filters cones to a forward window
+            - Splits cones into left/right corridor boundaries
+            - Selects a lookahead forward distance
+            - Uses midpoint if both boundaries exist
+            - Estimates center if only one boundary exists
+
+    3) pure_pursuit.py - target point to steering command
+
+        This file implements the lateral controller.
+
+        What it does:
+            - Takes target (right_m, fwd_m)
+            - Computes a steering angle proxy in degrees
+            - Maps degrees to a 0-100 steering command
+                - Negative angle -> < 50
+                - Zero angle     -> 50
+                - Positive angle -> > 50
+
+    4) speed_rules.py - throttle and brake safety logic
+
+        This file implements the longitudinal control and emergency braking logic.
+        It is especially important since there is no reliable wheel speed feedback.
+
+        What it does:
+            - Starts with a base open-loop throttle
+            - Reduces throttle when steering demand is large
+            - Scans cones in a forward corridor
+            - Triggers emergency stop for very close obstacles
+            - Applies slowdown behavior for moderately close obstacles
+
+D) Sensors
+
+    1) cone_source.py - cone input interface
+
+        This file defines the interface that any cone provider must implement.
+        It helps isolate the navigation stack from perception changes.
+
+        Defines:
+            - ConeBox = (xc, yc, zc, w, d, h)
+            - get_cones() -> List[ConeBox]
+
+    2) cone_source_file.py - file-backed cone source (bench testing)
+
+        This file provides a stand-in cone source for testing without live sensors.
+
+        What it does:
+            - Loads cone_sample.json
+            - Returns cones as a list of ConeBox tuples
+            - Supports both static lists and multi-frame playback
