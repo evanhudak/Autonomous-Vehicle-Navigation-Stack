@@ -1,0 +1,471 @@
+=================================
+		FOLDER CONTENTS
+=================================
+
+A) autonav_v2 (Root Folder)
+
+	1) main.py – System Integration (Top-Level Entry Point)
+
+		ESSENTIAL for push test. This is the core of the system.
+
+		It wires together:
+		Perception -> Frame Normalization -> Target Selection -> Steering -> Speed Rules -> Logging
+
+		For push testing:
+			- It reads real sensor detections
+			- Computes steering and speed decisions
+			- Logs what would be sent to actuators
+			- Forces throttle and brake commands to 0 for safety
+
+		What it does:
+			- Loads parameters from config.yaml
+			- Selects cone source
+				- file
+				- live
+				- camera
+				- lidar
+				- fusion
+			- Converts cones to vehicle frame
+			- Computes navigation target
+			- Computes steering command
+			- Computes throttle and brake decisions
+			- Logs:
+				- Raw cones
+				- Target point
+				- Steering angle
+				- Throttle/brake
+				- Commands sent (0 during push test)
+				- Sensor health
+				- Loop timing
+			- Enforces push-test safety (no actuation)
+			- Handles safe shutdown
+
+	2) config.yaml – System Configuration & Tuning
+
+		ESSENTIAL for push test. This file controls system behavior without modifying code.
+
+		It defines:
+
+			Mode control:
+				- push_test | bench | road
+				- dry_run
+
+			Logging:
+				- JSONL output path
+				- Logging frequency
+
+			Health rules:
+				- Sensor timeout threshold
+				- Maximum cones allowed per frame
+
+			Steering calibration:
+				- Max wheel angle
+				- Inversion flag
+
+			Coordinate mapping:
+				- forward_axis
+				- forward_sign
+				- right_sign
+
+			Cone filtering window:
+				- Forward min/max
+				- Corridor width
+				- Lookahead distance
+				- Nearest cone count
+
+			Speed rules:
+				- Base throttle
+				- Steering slow gain
+				- Emergency stop distances
+
+			Cone source selection:
+				- file (bench testing)
+				- live (external perception pipeline)
+				- camera (YOLO on Pi)
+				- lidar (LD14 clustering)
+				- fusion (camera + lidar)
+
+	3) requirements.txt – Dependency List
+
+		ESSENTIAL for push test
+
+		Defines required Python packages:
+			- pyserial
+			- pyyaml
+			- numpy
+			- opencv-python
+			- ultralytics
+
+		Needed for:
+			- Serial communication
+			- YAML config parsing
+			- Numerical operations
+			- Camera handling
+			- YOLO inference
+
+	4) cone_sample.json – Bench Test Data
+
+		NOT essential for real sensor push test	(Used only if cone_source.type = "file")
+
+		Provides fake cone detections for:
+			- Algorithm validation
+			- Steering behavior checks
+			- Debugging without hardware
+
+		Supports:
+			- Static cone list
+			- Multi-frame playback with FPS
+
+B) logs/
+
+	1) live_cones.jsonl
+
+		ESSENTIAL if using file_tail live mode. This file is written by the perception pipeline.
+
+		Each line contains:
+			{
+			"t": 123.45,
+			"frame_id": 42,
+			"cones": [ ... ]
+			}
+
+		main.py reads this file during the push test.
+
+	2) push_test.jsonl
+
+		ESSENTIAL for validating results. This file confirms the push test worked correctly.
+
+		This file logs:
+			- Raw cones
+			- Target point
+			- Steering angle
+			- Would-have throttle/brake
+			- Commands actually sent
+			- Loop timing
+			- Sensor health
+			- Source type
+
+C) navigation/
+
+	1) cone_frame.py – Coordinate Frame Normalization
+
+		ESSENTIAL for push test. This converts sensor coordinates into vehicle control coordinates.
+
+		Converts:
+			(xc, yc) → (right_m, fwd_m)
+
+		Controlled by:
+			- forward_axis
+			- forward_sign
+			- right_sign
+
+		This is critical for verifying:
+			- Forward direction
+			- Left/right orientation
+			- Sign correctness
+
+	2) cone_target.py – Convert Cones into Target Point
+
+		ESSENTIAL for push test. This file creates the path-following target (path creation algorithm).
+
+		What it does:
+			- Converts cone boxes into (right_m, fwd_m)
+			- Filters cones to a forward window
+			- Splits cones into left/right corridor boundaries
+			- Selects a lookahead forward distance
+			- Uses midpoint if both boundaries exist
+			- Estimates center if only one boundary exists
+
+		Output:
+			(right_target_m, fwd_target_m)
+
+	3) pure_pursuit.py – Steering Controller
+
+		ESSENTIAL for push test. This file implements lateral control (path following algorithm).
+
+		What it does:
+			- Takes target (right_m, fwd_m)
+			- Computes a steering angle proxy in degrees
+			- Maps degrees to a 0-100 steering command:
+				- Negative angle -> < 50
+				- Zero angle -> 50
+				- Positive angle -> > 50
+
+	4) speed_rules.py – Throttle & Brake Logic
+
+		PARTIALLY essential for push test. Not physically used (throttle/brake = 0),
+		but still important.
+
+		What it does:
+			- Logs emergency stop triggers
+			- Logs slowdown logic
+			- Validates obstacle detection logic
+
+		Implements:
+			- Base open-loop throttle
+			- Reduces throttle when steering demand is large
+			- Scans cones in a forward corridor
+			- Triggers emergency stop for very close obstacles
+			- Applies slowdown behavior for moderately close obstacles
+
+D) sensors/
+
+	1) cone_source.py – Cone Input Interface
+
+		ESSENTIAL for push test. This file is meant to plug into navigation without code changes.
+
+		Defines:
+			ConeBox = (xc, yc, zc, w, d, h)
+			get_cones() -> List[ConeBox]
+			Optional get_frame()
+
+		Allows:
+			- File replay
+			- Live LiDAR
+			- Camera
+			- Fusion
+
+	2) cone_source_file.py – File-Backed Cone Source (Bench Testing)
+
+		NOT essential for push test. Provides a stand-in cone source for testing without live sensors and supports static lists and multi-frame playback.
+
+		What it does:
+			- Loads cone_sample.json
+			- Returns cones as ConeBox tuples
+
+	3) cone_source_live.py – Real Sensor Cone Provider
+
+		This file bridges perception pipeline and navigation stack.
+
+		Supported transports:
+			- udp_json
+			- serial_json
+			- file_tail
+
+		Responsibilities:
+			- Receive JSON frames
+			- Parse cones into ConeBox tuples
+			- Extract timestamps
+			- Extract frame_id
+			- Store latest frame
+			- Provide get_frame() and get_cones()
+
+	4) cone_source_camera.py - Camera and YOLO Source
+
+		This file is used in push testing for camera only operations.
+
+		What it does:
+			- Opens Pi camera
+			- Runs YOLO detection
+			- Filters for "cone" class
+			- Converts bounding box pixel -> (forward_m, right_m)
+			- Outputs ConeBoxes
+
+		Validates:
+			- Camera communication
+			- YOLO model
+			- Projection math
+			- Cone detection quality
+
+	5) cone_source_lidar.py - LiDAR Clustering Source
+
+		This file is used in push testing for LiDAR only operations
+
+		What it does:
+			- Opens LD14 serial port
+			- Clusters scan points into bounding boxes
+			- Filters by range and size
+			- Outputs ConeBoxes
+
+		Validates:
+			- Serial ports
+			- Baud rate
+			- Clustering behavior
+			- Object detection consistency
+
+	6) cone_source_fusion.py - Camera and LiDAR Fusion Source
+
+		This file is used in push testing for combining camera and LiDAR operations
+
+		What it does:
+			- Runs camera and YOLO
+			- Runs LiDAR clustering
+			- Matches detections to LiDAR boxes
+			- Only outputs boxes tagged is_cone=True
+			- Outputs ConeBoxes
+
+		Validates:
+			- Sensor synchronization
+			- Matching logic
+			- True cone filtering
+			- Combined perception reliability
+
+E) serial_io/
+
+	1) steering.py – Steering Arduino Interface
+
+		NOT used in push_test (dry_run=True).
+
+		Defines protocol:
+			- S:<pct>\n
+
+	2) throttle.py – Throttle Arduino Interface
+
+		NOT used in push_test.
+
+		Defines:
+			- AUTO\n
+			- <pct>\n
+			- STOP\n
+
+	3) brake.py – Brake Arduino Interface
+
+		NOT used in push_test.
+
+		Defines:
+			- <pct>\n
+
+=================================
+     	PUSH TEST NOTES
+=================================
+
+A) Before Testing
+
+	- Updated version of yolo.py exists in root (autonav_v2)
+		- Updated only to fit syntax of navigational code
+		- Remove this file before uploading folder to Pi
+
+	- Check Pi ports in config.yaml and in cone_source_lidar/cone_source_fusion
+
+	- Check these lines in config.yaml:
+
+		mode: "push_test"
+		dry_run: true
+
+		logging:
+		  enable: true
+		  path: "logs/push_test.jsonl"
+		  write_every_n: 1
+
+	- Choose cone source type in config.yaml (defined in file)
+
+	- Double check correct dependencies are defined in requirements.txt
+
+	- All testing results will be saved to "logs/push_test.jsonl"
+		- This file will be overwritten each test
+		- Copy this file before a new run to keep the current information
+		- It should hopefully be possible to see live log updates if Pi is readable by terminal
+		    - In bash, try:
+
+		        tail -f logs/push_test.jsonl
+
+B) Testing
+
+	- If desired, set cone source type to "file" to bench test in terminal
+
+	- Set cone source to "camera"
+		- Terminal output < cones= > should show changes as cones enter and exit view
+		- "logs/push_test.jsonl" should update
+		- In the log, sensor.source should show as "camera"
+		- If YOLO model fails, you may need to add in config.yaml:
+		
+			camera:
+		  		model_path: "sensors/best.pt"
+
+		- Confirm success of camera and YOLO model
+
+	- Set cone source to "lidar"
+		- Double check port and baud rate
+		- Output < cones= > should show nonzero values when objects are detected by LiDAR
+		- "logs/push_test.jsonl" should update
+		- In the log, sensor.source should show as "lidar"
+		- Confirm success of LiDAR
+
+	- Set cone source to "fusion"
+		- Fusion depends on successful camera and LiDAR tests
+		- Double check port and ensure cones_only is set to "true"
+		- "logs/push_test.jsonl" should update
+		- In the log, sensor.source should show as "fusion"
+		- Output < cones= > should be greater than 0 when cones are visible and in range of LiDAR
+			- If camera loses sight but LiDAR is engaged, < cones= > should drop
+		- If testing fails
+			- Check port definitions again
+			- In config.yaml, try:
+
+			    fusion:
+			        cones_only: false
+
+C) Final Notes
+
+	- Mostly any parameters can be directly changed in config.yaml so as to avoid editing code
+
+	- The values defined in cone_source.camera and cone_source.lidar affect how detections are mapped into meters
+
+	- If target coordinates are flipped, this should be able to be fixed in config.yaml, try:
+
+		frame:
+		  forward_axis: "x" or "y"
+		  forward_sign: 1 or -1
+		  right_sign: 1 or -1
+
+	    - This should fix left/right/forward without editing code
+
+	- If in terminal, Ctrl+C will stop the program
+
+
+=================================
+			SUMMARY
+=================================
+
+A) Required for Push Test
+
+	Core:
+		- main.py
+		- config.yaml
+		- navigation/
+		- sensors/
+		- push_test.jsonl
+
+	If using specific sources:
+		- camera -> cone_source_camera.py + best.pt
+		- lidar -> cone_source_lidar.py
+		- fusion -> cone_source_fusion.py
+	
+	live_cones.jsonl only required if type="live"
+
+B) Not Required for Push Test
+
+	- serial_io files (actuation disabled)
+	- cone_source_file.py (unless using file mode)
+	- cone_sample.json (unless using file mode)
+
+C) System Architecture (Final Form)
+
+	Perception Layer:
+
+		- file
+		- live
+		- camera
+		- lidar
+		- fusion
+
+	Navigation Layer:
+
+		- cone_frame
+		- cone_target
+		- pure_pursuit
+
+	Control Logic Layer:
+
+		- speed_rules
+		- serial_io (future road test)
+
+	Push test validates:
+
+		- Sensor communication
+		- Coordinate mapping
+		- Path generation
+		- Steering decisions
+		- Obstacle logic
+		- Timing and data freshness
+		- Without moving the vehicle

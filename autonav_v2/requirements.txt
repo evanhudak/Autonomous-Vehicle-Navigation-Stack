@@ -1,0 +1,6 @@
+pyserial
+pyyaml
+numpy
+opencv-python
+ultralytics
+pygame

@@ -1,0 +1,141 @@
+# Test mode
+mode: "push_test"  # "push_test" | "bench" | "road"
+dry_run: true      # MUST stay true for push test
+
+loop_hz: 20
+
+
+# Logging
+logging:
+  enable: true
+  path: "logs/push_test.jsonl"  # One JSON object per loop
+  write_every_n: 1              # 1 = every loop, 2 = every other loop, etc.
+
+
+# Health / sanity rules
+health:
+  # This only matters for live sensors
+  sensor_timeout_ms: 200
+
+  # Safety cap so a weird frame can't explode logs or computations
+  max_cones: 50
+
+
+# Serial ports
+# These are unused in push_test because dry_run is forced true in main.py
+serial:
+  baud: 9600
+  steering_port: "/dev/ttyUSB0"
+  throttle_port: "/dev/ttyUSB1"
+  brake_port: "/dev/ttyUSB2"
+
+
+# Steering mapping
+# 0% = -max_wheel_deg, 50% = straight, 100% = +max_wheel_deg
+steering:
+  max_wheel_deg: 45.0
+  invert: false
+
+
+# Coordinate frame
+# This is one of the main things you are validating during the push test
+frame:
+  forward_axis: "y"  # "x" or "y"
+  forward_sign: 1
+  right_sign: 1
+
+
+# Cone navigation
+cone_nav:
+  fwd_min_m: 0.25
+  fwd_max_m: 8.0
+
+  # If only one side of cones is visible, assume the corridor has this width
+  corridor_width_m: 2.0
+
+  # Target selection prefers a point about this far forward
+  target_fwd_m: 3.0
+
+  # Consider the nearest N cones per side
+  use_nearest_n: 3
+
+
+# Pure pursuit
+pure_pursuit:
+  lookahead_m: 3.0
+
+
+# Speed rules
+# In push test we compute and log these, but we do not actuate them
+speed:
+  base_throttle_pct: 25
+  min_throttle_pct: 10
+  max_throttle_pct: 35
+
+  # Reduce speed when steering demand increases
+  steering_slow_gain: 0.35
+
+  # Corridor safety rules
+  enable_emergency_stop: true
+  estop_corridor_half_width_m: 0.6
+  estop_distance_m: 1.2
+
+  # If an object is close but not in estop range, slow down
+  slow_distance_m: 2.5
+
+  brake_pct_estop: 90
+  brake_pct_slow: 40
+
+
+# Cone source
+cone_source:
+
+  # Select where cone detections come from.
+  #
+  # types:
+  #   "file"   = replay detections from a JSON file (offline / bench debugging)
+  #   "live"   = read detections produced by an external perception pipeline
+  #              (ex: another process writing logs/live_cones.jsonl)
+  #   "camera" = run YOLO on the Pi camera and convert detections into ConeBoxes
+  #              (good for validating camera comms + model inference)
+  #   "lidar"  = run LD14 LiDAR clustering and convert object boxes into ConeBoxes
+  #              (good for validating LiDAR comms + clustering geometry)
+  #   "fusion" = run camera + LiDAR together, and only output LiDAR boxes that match
+  #              a YOLO "cone" detection (best for true cone-only push testing)
+
+  type: "lidar"
+
+  file_path: "cone_sample.json"
+
+  live:
+    transport: "file_tail"
+    path: "logs/live_cones.jsonl"
+
+  camera:
+    rgb: true
+    camera_height_m: 0.8
+    camera_pitch_deg: 0.0
+    horizontal_fov_deg: 70.0
+    vertical_fov_deg: 55.0
+    assumed_cone_w_m: 0.15
+    assumed_cone_d_m: 0.15
+    assumed_cone_h_m: 0.0
+    min_forward_m: 0.25
+    max_forward_m: 30.0
+
+  lidar:
+    port: "/dev/serial0"
+    baudrate: 230400
+    min_cluster_size: 5
+    cluster_distance_threshold: 0.08
+    min_range_m: 0.20
+    max_range_m: 30.0
+    max_box_width_m: 1.5
+    max_box_depth_m: 1.5
+
+  fusion:
+    lidar_port: "/dev/serial0"
+    cones_only: true
+    min_range_m: 0.20
+    max_range_m: 30.0
+    max_cones: 50
